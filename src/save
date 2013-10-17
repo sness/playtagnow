@@ -1,0 +1,1944 @@
+------------------------------ ClipInfoLoader.hx ------------------------------ 
+
+					var clip_id_:Int = Std.parseInt(StringTools.replace(elements[0],'"',''));
+
+
+------------------------------ GlobalSettings.hx ------------------------------
+
+	public static function trace():Void {
+// 		trace(_clips);
+		var a : Clip;
+		for(n in _clips.keys()) {
+// 			trace(_clips.get(n));
+			a = _clips.get(n);
+			trace(a.getClipId() + " " + a.getGridX() + " " + a.getGridY());
+		}
+	}
+
+
+------------------------------ Tag.hx ------------------------------
+//
+// Holds an individual clip
+//
+
+class Tag { 
+
+	var _name : String;
+
+	public function new (name_:String) {
+		_name = name_;
+	}
+
+	public function getName():String { 
+		return _name;
+	}
+
+	public function setName(s:String) { 
+		_name = s;
+	}
+}
+
+------------------------------ TagLoader.hx ------------------------------
+
+						var present = StringTools.replace(elements[j],'"','');
+
+
+------------------------------ TagLoader.hx ------------------------------
+
+ 		// Split the input data file into lines and fill up the _image_urls data
+ 		// structure with URLs for the different zoom levels
+ 		for (i in 1...lines.length) {
+ 			if (lines[i].charAt(0) != "#") {
+  				elements = lines[i].split('\t');
+				trace("e=" + elements);
+				if (elements[0] != "") {
+					var clip_id:String = elements[0];
+					for (j in 1...elements.length) {
+						trace(clip_id + " " + elements[j]);
+						if (elements[j] == "1") {
+							trace("present");
+							Clips.addTagToClip(clip_id,tags[j]);
+						} else {
+							trace("absent");
+						}
+					}
+				}
+			}
+		}
+	}
+
+
+------------------------------ TagCloud.hx ------------------------------
+
+** Wed Aug 26 2009 - 14:36:41 PM
+   -----------------------------
+
+This is working like the old code used to, but now we want to add in
+repulsion by the walls and then hard sphere repulsion for each tag
+based on its actual size.
+
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+
+class TagCloud extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	static var _width  : Float;
+	static var _height : Float;
+
+	static var _tag_cloud_tag_container:Sprite;
+
+	var _nodes : Array<TagCloudTag>;
+
+	// Constants
+	var _columb_constant:Float; // Columbic force constant
+	var _inertial_distance:Float; // Inertial or resting distance of the springs
+	var _springK:Float; // Elasticity coefficient. The larger K is, the stiffer the spring.
+	var _energy_loss:Float;
+
+	public function new (x_:Int, y_:Int, width_:Int, height_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_width = width_;
+		_height = height_;
+
+		_nodes = new Array();
+
+		// Constants for spring motion
+		_columb_constant = -500000;
+		_inertial_distance = 0.0;
+		_springK = 1.0;
+		_energy_loss = 0.99999;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		// Create the background
+ 		_background = new Shape();
+   		_background.graphics.beginFill(0xFFFFFF,1);
+		_background.graphics.lineStyle(1,0x333333);
+   		_background.graphics.moveTo(0,0);
+   		_background.graphics.lineTo(_width,0);
+   		_background.graphics.lineTo(_width,_height);
+   		_background.graphics.lineTo(0,_height);
+   		_background.graphics.lineTo(0,0);
+ 		_well.addChild(_background);
+
+		// A container for all the songListLines 
+		_tag_cloud_tag_container = new Sprite();
+		_well.addChild(_tag_cloud_tag_container);
+
+	}
+
+	//
+	// Loop over all tags, and for each tag, loop over all the clips and see if
+	// this clip includes this tag.  If it does, remember it's location.  Then,
+	// after we're done, find the midpoint.
+	//
+	// Later, we will change this from individual tags into clusters of tags.
+	//
+	public function calculateTagPositions():Void {
+		
+		var tags:Array<String> = Tags.getAllTags();
+
+		var clip_ids:Array<String> = Clips.getAllClipIDs();
+
+		for (tag in tags) {
+			var grid_locations : Array<GridLocation> = new Array();
+			var total_num : Int = 0;
+			// Get all the grid locations that this tag can be found at
+			for (clip_id in clip_ids) {
+				if (Clips.clipContainsTag(clip_id,tag)) {
+					var clip : Clip = Clips.getClip(clip_id);
+					var g : GridLocation = new GridLocation(clip.getGridX(), clip.getGridY());
+					grid_locations.push(g);
+					total_num += 1;
+				}
+			}
+
+			// Find the center of mass of these grid locations
+			var center_x:Float = 0;
+			var center_y:Float = 0;
+			for (grid_location in grid_locations) {
+				center_x += grid_location.getGridX();
+				center_y += grid_location.getGridY();
+			}
+			center_x = ((center_x / grid_locations.length) / GlobalSettings.getGridSizeX()) * _width;
+			center_y = ((center_y / grid_locations.length) / GlobalSettings.getGridSizeY()) * _height;
+
+			// Add a TagCloudTag at this location
+			addTag(center_x,center_y,tag,total_num);
+
+		}
+		
+		// Calculate the final positions of the tags by iterating the calculate
+		// loop a bunch of times
+		for (i in 0...100) {
+			calculate();
+		}
+	}
+
+	public function addTag(x_:Float, y_:Float,tag_:String,total_num_:Int) {
+		var tag_cloud_tag:TagCloudTag = new TagCloudTag(x_,y_,tag_,total_num_);
+		_nodes.push(tag_cloud_tag);
+		_tag_cloud_tag_container.addChild(tag_cloud_tag);
+		
+		
+	}
+	
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Force calculations
+	//
+	////////////////////////////////////////////////////////////////////////////////
+
+	// Calculate all the forces on each node and their new positions
+	public function calculate():Void {
+
+		var timestep:Float = 0.1;
+		// Compute internal forces on the springs
+ 		for (n in _nodes) {
+			// Compute the spring force between this node and its origin
+			var f:Vector = computeSpringForce(n);
+
+			// Compute the electrostatic force between this node and all other nodes
+			var e:Vector = computeElectrostaticForce(n);
+			f.add(e);
+
+			f.mult(timestep);
+			var v:Vector = n.getVelocity();
+			v.add(f);
+			n.setVelocity(v);
+
+			v.mult(timestep);
+			var p:Vector = n.getPosition();
+			p.add(v);
+			n.setPosition(p);
+ 		}
+	}
+
+	function computeSpringForce(a:TagCloudTag):Vector {
+		var force = new Vector();
+
+		var b:Vector = new Vector(a.getOrigX(),a.getOrigY());
+
+		if (a.getPosition().equals(b)) {
+			return force;
+		}
+
+		var apos:Vector = a.getPosition();
+		var displacement:Vector = b.subtract(apos);
+
+		var k:Float = 10.0;
+
+		force = displacement.mult(k);
+
+		return force;
+	}
+
+	function computeElectrostaticForce(a:TagCloudTag):Vector {
+		var f:Vector = new Vector();
+		for (n in _nodes) {
+			if (n != a) {
+				var apos:Vector = a.getPosition();
+				var npos:Vector = n.getPosition();
+				var r:Float = apos.distance(n.getPosition());
+				var numerator:Vector = npos.subtract(apos);
+				// 				numerator.mult(-);
+				numerator.mult(_columb_constant);
+				var total:Vector = numerator.divide(r * r * r);
+				f.add(total);
+			}
+		}
+		return f;
+	}
+
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Utility functions
+	//
+	////////////////////////////////////////////////////////////////////////////////
+	
+	// A "r"easonable number of decimal points for trace()
+	public function r(f:Float):Float {
+		var d:Float = 10000;
+		var n:Int = Std.int(f * d);
+		return n / d;
+	}
+	
+	// Change a Float to an Int for trace()
+	public function ii(f:Float):Int {
+		return Std.int(f);
+	}
+
+
+
+}
+
+
+------------------------------ TagCloud.hx ------------------------------
+
+** Thu Aug 27 2009 - 11:02:57 AM
+   -----------------------------
+
+Now we want to modify the electrostatic force so that it drops to 0 if the
+bounding boxes for two tags aren't touching each other.
+
+		return (r2.getLeftEdge() > getRightEdge() ||
+				 r2.getRightEdge() < getLeftEdge() ||
+				 r2.getTopEdge() > getBottomEdge() ||
+				 r2.getBottomEdge() < getTopEdge());
+
+
+------------------------------ TagCloud.hx ------------------------------
+
+** Thu Aug 27 2009 - 15:03:49 PM
+   -----------------------------
+
+Before I screw it up too much more:
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+
+class TagCloud extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	static var _width  : Float;
+	static var _height : Float;
+
+	static var _tag_cloud_tag_container:Sprite;
+
+	var _nodes : Array<TagCloudTag>;
+
+	// Constants
+	var _columb_constant:Float; // Columbic force constant
+	var _inertial_distance:Float; // Inertial or resting distance of the springs
+	var _springK:Float; // Elasticity coefficient. The larger K is, the stiffer the spring.
+	var _energy_loss:Float;
+
+	public function new (x_:Int, y_:Int, width_:Int, height_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_width = width_;
+		_height = height_;
+
+		_nodes = new Array();
+
+		// Constants for spring motion
+//  		_columb_constant = -500000;
+ 		_columb_constant = -500000;
+		_inertial_distance = 0.0;
+		_springK = 1.0;
+		_energy_loss = 0.99999;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		// Create the background
+ 		_background = new Shape();
+   		_background.graphics.beginFill(0xFFFFFF,1);
+		_background.graphics.lineStyle(1,0x333333);
+   		_background.graphics.moveTo(0,0);
+   		_background.graphics.lineTo(_width,0);
+   		_background.graphics.lineTo(_width,_height);
+   		_background.graphics.lineTo(0,_height);
+   		_background.graphics.lineTo(0,0);
+ 		_well.addChild(_background);
+
+		// A container for all the songListLines 
+		_tag_cloud_tag_container = new Sprite();
+		_well.addChild(_tag_cloud_tag_container);
+
+	}
+
+	//
+	// Loop over all tags, and for each tag, loop over all the clips and see if
+	// this clip includes this tag.  If it does, remember it's location.  Then,
+	// after we're done, find the midpoint.
+	//
+	// Later, we will change this from individual tags into clusters of tags.
+	//
+	public function calculateTagPositions():Void {
+		
+		var tags:Array<String> = Tags.getAllTags();
+
+		var clip_ids:Array<String> = Clips.getAllClipIDs();
+
+		for (tag in tags) {
+			var grid_locations : Array<GridLocation> = new Array();
+			var total_num : Int = 0;
+			// Get all the grid locations that this tag can be found at
+			for (clip_id in clip_ids) {
+				if (Clips.clipContainsTag(clip_id,tag)) {
+					var clip : Clip = Clips.getClip(clip_id);
+					var g : GridLocation = new GridLocation(clip.getGridX(), clip.getGridY());
+					grid_locations.push(g);
+					total_num += 1;
+				}
+			}
+
+			// Find the center of mass of these grid locations
+			var center_x:Float = 0;
+			var center_y:Float = 0;
+			for (grid_location in grid_locations) {
+				center_x += grid_location.getGridX();
+				center_y += grid_location.getGridY();
+			}
+			center_x = ((center_x / grid_locations.length) / GlobalSettings.getGridSizeX()) * _width;
+			center_y = ((center_y / grid_locations.length) / GlobalSettings.getGridSizeY()) * _height;
+
+			// Add a TagCloudTag at this location
+			if (total_num > 30) {
+				addTag(center_x,center_y,tag,total_num);
+			}
+
+		}
+		
+// 		// Calculate the final positions of the tags by iterating the calculate
+// 		// loop a bunch of times
+// 		for (i in 0...100) {
+// 			calculate();
+// 		}
+	}
+
+	public function addTag(x_:Float, y_:Float,tag_:String,total_num_:Int) {
+		var tag_cloud_tag:TagCloudTag = new TagCloudTag(x_,y_,tag_,total_num_);
+		_nodes.push(tag_cloud_tag);
+		_tag_cloud_tag_container.addChild(tag_cloud_tag);
+		
+		
+	}
+	
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Force calculations
+	//
+	////////////////////////////////////////////////////////////////////////////////
+
+	// Calculate all the forces on each node and their new positions
+	public function calculate():Void {
+
+		var timestep:Float = 0.1;
+		// Compute internal forces on the springs
+ 		for (n in _nodes) {
+			// Compute the spring force between this node and its origin
+			var f:Vector = computeSpringForce(n);
+
+ 			// Compute the electrostatic force between this node and all other nodes
+ 			var e:Vector = computeElectrostaticForce(n);
+ 			f.add(e);
+
+  			// Compute the wall force between this node and all the walls
+  			var w:Vector = computeWallForce(n);
+  			f.add(w);
+
+			f.mult(timestep);
+			var v:Vector = n.getVelocity();
+			v.add(f);
+			n.setVelocity(v);
+
+			v.mult(timestep);
+			var p:Vector = n.getPosition();
+			p.add(v);
+			n.setPosition(p);
+ 		}
+	}
+
+	function computeSpringForce(a:TagCloudTag):Vector {
+		var force = new Vector();
+
+		var b:Vector = new Vector(a.getOrigX(),a.getOrigY());
+
+		if (a.getPosition().equals(b)) {
+			return force;
+		}
+
+		var apos:Vector = a.getPosition();
+		var displacement:Vector = b.subtract(apos);
+
+		var k:Float = 10.0;
+
+		force = displacement.mult(k);
+
+		return force;
+	}
+
+
+	function computeElectrostaticForce(a:TagCloudTag):Vector {
+		var f:Vector = new Vector();
+		for (n in _nodes) {
+			if (n != a) {
+				if (n.overlapsWith(a)) {
+ 					trace("overlap " + a.getTag() + " " + n.getTag());
+					
+					var apos:Vector = a.getPosition();
+					var npos:Vector = n.getPosition();
+					var r:Float = apos.distance(n.getPosition());
+					var numerator:Vector = npos.subtract(apos);
+					numerator.mult(_columb_constant);
+					var total:Vector = numerator.divide(r * r * r);
+//  						total.mult(100);
+					f.add(total);
+				}
+
+			}
+		}
+		return f;
+	}
+
+	function computeWallForce(a:TagCloudTag):Vector {
+ 		var force = new Vector();
+		
+		if (a.getLeftEdge() < 0) {
+			force.x = a.getLeftEdge() * -100;
+		}
+
+		if (a.getRightEdge() > _width) {
+			force.x = (a.getRightEdge() - _width) * -100;
+		}
+
+		if (a.getTopEdge() < 0) {
+			force.y = a.getTopEdge() * -100;
+		}
+
+		if (a.getBottomEdge() > _width) {
+			force.y = (a.getBottomEdge() - _height) * -100;
+		}
+
+// 		var apos:Vector = a.getPosition();
+// 		var displacement:Vector = b.subtract(apos);
+
+// 		var k:Float = 10.0;
+
+// 		force = displacement.mult(k);
+
+		force.mult(5);
+
+		return force;
+	}
+
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Utility functions
+	//
+	////////////////////////////////////////////////////////////////////////////////
+	
+	// A "r"easonable number of decimal points for trace()
+	public function r(f:Float):Float {
+		var d:Float = 10000;
+		var n:Int = Std.int(f * d);
+		return n / d;
+	}
+	
+	// Change a Float to an Int for trace()
+	public function ii(f:Float):Int {
+		return Std.int(f);
+	}
+
+
+
+}
+
+
+------------------------------ TagCloud.hx ------------------------------
+
+** Thu Aug 27 2009 - 15:40:34 PM
+   -----------------------------
+
+I'm going to fix TagCloudTag and TagCloud once and for all now.
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+
+class TagCloud extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	static var _width  : Float;
+	static var _height : Float;
+
+	static var _tag_cloud_tag_container:Sprite;
+
+	var _nodes : Array<TagCloudTag>;
+
+	// Constants
+	var _columb_constant:Float; // Columbic force constant
+	var _inertial_distance:Float; // Inertial or resting distance of the springs
+	var _springK:Float; // Elasticity coefficient. The larger K is, the stiffer the spring.
+	var _energy_loss:Float;
+
+	public function new (x_:Int, y_:Int, width_:Int, height_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_width = width_;
+		_height = height_;
+
+		_nodes = new Array();
+
+		// Constants for spring motion
+//  		_columb_constant = -500000;
+ 		_columb_constant = -50000;
+		_inertial_distance = 0.0;
+		_springK = 1.0;
+		_energy_loss = 0.99999;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		// Create the background
+ 		_background = new Shape();
+   		_background.graphics.beginFill(0xFFFFFF,1);
+		_background.graphics.lineStyle(1,0x333333);
+   		_background.graphics.moveTo(0,0);
+   		_background.graphics.lineTo(_width,0);
+   		_background.graphics.lineTo(_width,_height);
+   		_background.graphics.lineTo(0,_height);
+   		_background.graphics.lineTo(0,0);
+ 		_well.addChild(_background);
+
+		// A container for all the songListLines 
+		_tag_cloud_tag_container = new Sprite();
+		_well.addChild(_tag_cloud_tag_container);
+
+	}
+
+	//
+	// Loop over all tags, and for each tag, loop over all the clips and see if
+	// this clip includes this tag.  If it does, remember it's location.  Then,
+	// after we're done, find the midpoint.
+	//
+	// Later, we will change this from individual tags into clusters of tags.
+	//
+	public function calculateTagPositions():Void {
+		
+		var tags:Array<String> = Tags.getAllTags();
+
+		var clip_ids:Array<String> = Clips.getAllClipIDs();
+
+		for (tag in tags) {
+			var grid_locations : Array<GridLocation> = new Array();
+			var total_num : Int = 0;
+			// Get all the grid locations that this tag can be found at
+			for (clip_id in clip_ids) {
+				if (Clips.clipContainsTag(clip_id,tag)) {
+					var clip : Clip = Clips.getClip(clip_id);
+					var g : GridLocation = new GridLocation(clip.getGridX(), clip.getGridY());
+					grid_locations.push(g);
+					total_num += 1;
+				}
+			}
+
+			// Find the center of mass of these grid locations
+			var center_x:Float = 0;
+			var center_y:Float = 0;
+			for (grid_location in grid_locations) {
+				center_x += grid_location.getGridX();
+				center_y += grid_location.getGridY();
+			}
+			center_x = ((center_x / grid_locations.length) / GlobalSettings.getGridSizeX()) * _width;
+			center_y = ((center_y / grid_locations.length) / GlobalSettings.getGridSizeY()) * _height;
+
+			// Add a TagCloudTag at this location
+			if (total_num > 150) {
+				addTag(center_x,center_y,tag,total_num);
+			}
+
+		}
+		
+// 		// Calculate the final positions of the tags by iterating the calculate
+// 		// loop a bunch of times
+// 		for (i in 0...100) {
+// 			calculate();
+// 		}
+	}
+
+	public function addTag(x_:Float, y_:Float,tag_:String,total_num_:Int) {
+		var tag_cloud_tag:TagCloudTag = new TagCloudTag(x_,y_,tag_,total_num_);
+		_nodes.push(tag_cloud_tag);
+		_tag_cloud_tag_container.addChild(tag_cloud_tag);
+		
+		
+	}
+	
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Force calculations
+	//
+	////////////////////////////////////////////////////////////////////////////////
+
+	// Calculate all the forces on each node and their new positions
+	public function calculate():Void {
+
+		var timestep:Float = 0.1;
+		// Compute internal forces on the springs
+ 		for (n in _nodes) {
+			// Compute the spring force between this node and its origin
+			var f:Vector = computeSpringForce(n);
+
+ 			// Compute the electrostatic force between this node and all other nodes
+ 			var e:Vector = computeElectrostaticForce(n);
+ 			f.add(e);
+
+  			// Compute the wall force between this node and all the walls
+  			var w:Vector = computeWallForce(n);
+  			f.add(w);
+
+			f.mult(timestep);
+			var v:Vector = n.getVelocity();
+			v.add(f);
+			n.setVelocity(v);
+
+			v.mult(timestep);
+			var p:Vector = n.getPosition();
+			p.add(v);
+			n.setPosition(p);
+ 		}
+	}
+
+	function computeSpringForce(a:TagCloudTag):Vector {
+		var force = new Vector();
+
+		var b:Vector = new Vector(a.getOrigX(),a.getOrigY());
+
+		if (a.getPosition().equals(b)) {
+			return force;
+		}
+
+		var apos:Vector = a.getPosition();
+		var displacement:Vector = b.subtract(apos);
+
+		var k:Float = 10.0;
+
+		force = displacement.mult(k);
+
+		return force;
+	}
+
+
+	function computeElectrostaticForce(a:TagCloudTag):Vector {
+		var f:Vector = new Vector();
+		for (n in _nodes) {
+			trace("comparing " + a.getTag() + " with " + n.getTag());
+			if (n != a) {
+				var apos:Vector = a.getPosition();
+				var npos:Vector = n.getPosition();
+				var r:Float = apos.distance(n.getPosition());
+				var numerator:Vector = npos.subtract(apos);
+				numerator.mult(_columb_constant);
+				var total:Vector = numerator.divide(r * r * r);
+				if (a.overlapsWith(n)) {
+					trace("overlap " + a.getTag() + " " + n.getTag());
+					total.mult(100000);
+				}
+				f.add(total);
+			}
+		}
+		return f;
+	}
+
+	function computeWallForce(a:TagCloudTag):Vector {
+ 		var force = new Vector();
+		
+		if (a.getLeftEdge() < 0) {
+			force.x = a.getLeftEdge() * -100;
+		}
+
+		if (a.getRightEdge() > _width) {
+			force.x = (a.getRightEdge() - _width) * -100;
+		}
+
+		if (a.getTopEdge() < 0) {
+			force.y = a.getTopEdge() * -100;
+		}
+
+		if (a.getBottomEdge() > _width) {
+			force.y = (a.getBottomEdge() - _height) * -100;
+		}
+
+// 		var apos:Vector = a.getPosition();
+// 		var displacement:Vector = b.subtract(apos);
+
+// 		var k:Float = 10.0;
+
+// 		force = displacement.mult(k);
+
+// 		force.mult(5);
+
+		return force;
+	}
+
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Utility functions
+	//
+	////////////////////////////////////////////////////////////////////////////////
+	
+	// A "r"easonable number of decimal points for trace()
+	public function r(f:Float):Float {
+		var d:Float = 10000;
+		var n:Int = Std.int(f * d);
+		return n / d;
+	}
+	
+	// Change a Float to an Int for trace()
+	public function ii(f:Float):Int {
+		return Std.int(f);
+	}
+
+
+
+}
+
+------------------------------ TagCloudTag.hx ------------------------------
+
+** Thu Aug 27 2009 - 15:41:04 PM
+   -----------------------------
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+import flash.text.TextField;
+import flash.text.TextFieldAutoSize;
+import flash.text.TextFormat;
+
+class TagCloudTag extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	var t:TextField;
+	var format:TextFormat;
+
+	var _width  : Float;
+	var _height : Float;
+
+	var _tag : String;
+	var _total_num : Int;
+	
+	var _orig_x : Float;
+	var _orig_y : Float;
+
+	// Force calculations
+	var _position : Vector;
+	var _velocity : Vector;
+	var _force : Vector;
+	var _mass : Float;
+
+	public function new (x_:Float, y_:Float, tag_:String, total_num_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_orig_x = x_;
+		_orig_y = y_;
+		_tag = tag_;
+		_total_num = total_num_;
+
+		// sness - Need to change this later to reflect actual text properties
+		_width = 200;
+		_height = 20;
+
+		// Force calculations
+		_position = new Vector(x,y);
+		_velocity = new Vector();
+		_force = new Vector();
+		_mass = 1.0;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		t = new TextField();
+		// 		t.width = _width; 
+		t.selectable = false;
+		t.text = _tag;
+		// 		t.border = true;
+		t.autoSize = TextFieldAutoSize.CENTER;
+
+		format = new TextFormat();
+		format.font = "Arial";
+		format.size = (total_num_/10) + 10;
+		format.bold = true;
+		
+		t.setTextFormat(format);
+
+		_well.addChild(t);
+
+		// 		// sness - For testing
+		//  		_background = new Shape();
+		//    		_background.graphics.beginFill(0xFF0000,1);
+		// 		_background.graphics.lineStyle(1,0x333333);
+		//    		_background.graphics.moveTo(0,0);
+		//    		_background.graphics.lineTo(3,0);
+		//    		_background.graphics.lineTo(3,3);
+		//    		_background.graphics.lineTo(0,3);
+		//    		_background.graphics.lineTo(0,0);
+		//  		_well.addChild(_background);
+
+		addEventListener(MouseEvent.MOUSE_DOWN, mouseDownListener);		
+	}
+
+ 	function mouseDownListener(e:MouseEvent):Void {
+		trace("down=" + _tag);
+	}
+
+	public function getTag():String {
+		return _tag;
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Force calculations
+	//
+	////////////////////////////////////////////////////////////////////////////////
+
+	public function getOrigX():Float {
+		return _orig_x;
+	}
+
+	public function getOrigY():Float {
+		return _orig_y;
+	}
+
+	public function getPosition():Vector {
+		trace("gp x=" + x + " y=" + y);
+ 		_position.x = x;
+ 		_position.y = y;
+		return _position;
+	}
+
+	public function getLeftEdge():Float {
+		trace("gle " + _tag + " px=" + rr(_position.x) + " tw2=" + rr(t.width / 2.0) + " ret=" + rr(_position.x - (t.width / 2.0)));
+		return _position.x - (t.width / 2.0);
+	}
+
+	public function getRightEdge():Float {
+		trace("gre " + _tag + " px=" + rr(_position.x) + " tw2=" + rr(t.width / 2.0) + " ret=" + rr(_position.x + (t.width / 2.0)));		return _position.x + (t.width / 2.0);
+	}
+
+	public function getTopEdge():Float {
+		trace("gte " + _tag + " py=" + rr(_position.y) + " tw2=" + rr(t.height / 2.0) + " ret=" + rr(_position.y - (t.height / 2.0)));
+		return _position.y - (t.height / 2.0);
+	}
+
+	public function getBottomEdge():Float {
+		trace("gbe " + _tag + " py=" + rr(_position.y) + " tw2=" + rr(t.height / 2.0) + " ret=" + rr(_position.y + (t.height / 2.0)));
+		return _position.y + (t.height / 2.0);
+	}
+	
+	public function setPosition(f:Vector) {
+		_position = f;
+
+		// 		if (_position.x < 0) {
+		// 			_position.x = 0;
+		// 		}
+		// 		if (_position.x > 300) {
+		// 			_position.x = 300;
+		// 		}
+
+		// 		if (_position.y < 0) {
+		// 			_position.y = 0;
+		// 		}
+		// 		if (_position.y > 300) {
+		// 			_position.y = 300;
+		// 		}
+
+		// 		x = _position.x - (width / 2);
+		// 		y = _position.y - (height / 2);
+
+ 		x = _position.x;
+ 		y = _position.y;
+
+ 		t.x = -1 * (width / 2);
+ 		t.y = -1 * (height / 2);
+
+		//  		trace("x=" + _position.x + " y=" + _position.y + "w=" + width + " h=" + height);
+
+	}
+
+	public function getVelocity():Vector {
+		return _velocity;
+	}
+
+	public function setVelocity(f:Vector) {
+		_velocity = f;
+	}
+
+	public function getForce():Vector {
+		return _force;
+	}
+
+	public function setForce(f:Vector) {
+		_force = f;
+	}
+
+	public function getMass():Float {
+		return _mass;
+	}
+
+	public function setMass(f:Float) {
+		_mass = f;
+	}
+
+	public function getArea():Float {
+		return width * height;
+	}
+
+	public function overlapsWith(other:TagCloudTag) {
+
+		var this_area:Float = getArea();
+		var other_area:Float = other.getArea();
+
+		trace("ta=" + this_area + " oa=" + other_area);
+
+		trace("width=" + width + " t.width=" + t.width);
+		trace("height=" + height + " t.height=" + t.height);
+
+		var a_top:Float;
+		var a_left:Float;
+		var a_bottom:Float;
+		var a_right:Float;
+
+		var b_top:Float;
+		var b_left:Float;
+		var b_bottom:Float;
+		var b_right:Float;
+
+		//rect 'a' can never lie completely 'inside' rect 'b'		
+		if (this_area > other_area) {
+			a_top = getTopEdge();
+			a_left = getLeftEdge();
+			a_bottom = getBottomEdge();
+			a_right = getRightEdge();
+
+			b_top = other.getTopEdge();
+			b_left = other.getLeftEdge();
+			b_bottom = other.getBottomEdge();
+			b_right = other.getRightEdge();
+			trace("normal");
+		} else {
+			b_top = getTopEdge();
+			b_left = getLeftEdge();
+			b_bottom = getBottomEdge();
+			b_right = getRightEdge();
+
+			a_top = other.getTopEdge();
+			a_left = other.getLeftEdge();
+			a_bottom = other.getBottomEdge();
+			a_right = other.getRightEdge();
+			trace("swap");
+		}
+
+		trace("px=" + _position.x + " py=" + _position.y);
+		trace("at=" + rr(a_top) + " ab=" + rr(a_bottom) + " al=" + rr(a_left) + " ar=" + rr(a_right));
+		trace("bt=" + rr(b_top) + " bb=" + rr(b_bottom) + " bl=" + rr(b_left) + " br=" + rr(b_right));
+
+		//check top-left point
+		if( b_top >= a_top && b_top <= a_bottom ) {
+			if( b_left >= a_left && b_left <= a_right ) {
+				return true;
+			}
+		}
+
+		//check top-right point
+		if( b_top >= a_top && b_top <= a_bottom ) {
+			if( b_right >= a_left && b_right <= a_right ) {
+				return true;
+			}
+		}
+
+		//check bottom-left point
+		if( b_bottom >= a_top && b_bottom <= a_bottom ) {
+			if( b_left >= a_left && b_left <= a_right ) {
+				return true;
+			}
+		}
+
+		//check bottom-right point
+		if( b_bottom >= a_top && b_bottom <= a_bottom ) {
+			if( b_right >= a_left && b_right <= a_right ) {
+				return true;
+			}
+		}
+
+		return false;
+
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Utility functions
+	//
+	////////////////////////////////////////////////////////////////////////////////
+	
+	// A "r"easonable number of decimal points for trace()
+	public function rr(f:Float):Float {
+		var d:Float = 10000;
+		var n:Int = Std.int(f * d);
+		return n / d;
+	}
+	
+	// Change a Float to an Int for trace()
+	public function ii(f:Float):Int {
+		return Std.int(f);
+	}
+
+}
+
+
+------------------------------ SongList.hx ------------------------------
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+import flash.text.TextField;
+import flash.text.TextFormat;
+
+class SongList extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	static var _song_list_line_container:Sprite;
+
+	static var _artist_header:TextField;
+	static var _format:TextFormat;
+
+	static var _width  : Float;
+	static var _height : Float;
+
+	public function new (x_:Int, y_:Int, width_:Int, height_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_width = width_;
+		_height = height_;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		// Create the background
+ 		_background = new Shape();
+   		_background.graphics.beginFill(0xFFFFFF,1);
+		_background.graphics.lineStyle(1,0x333333);
+   		_background.graphics.moveTo(0,0);
+   		_background.graphics.lineTo(_width,0);
+   		_background.graphics.lineTo(_width,_height);
+   		_background.graphics.lineTo(0,_height);
+   		_background.graphics.lineTo(0,0);
+ 		_well.addChild(_background);
+
+		// The header with the artist name
+		_artist_header = new TextField();
+		_artist_header.width = _width; 
+		_artist_header.selectable = false;
+
+		_format = new TextFormat();
+		_format.font = "Arial";
+		_format.size = 14;
+		_format.bold = true;
+		
+		_artist_header.setTextFormat(_format);
+
+		_well.addChild(_artist_header);
+
+		// A container for all the songListLines 
+		_song_list_line_container = new Sprite();
+		_well.addChild(_song_list_line_container);
+
+
+	}
+	
+	// Populate the list with all the songs from this artist
+	//
+	// sness - Later would be better to change this to being activate via an
+	// event from Visualization, which calls this method, but for now this is
+	// fine, since we can only have one SongList.
+	public static function populateWithArtist(artist:String):Void {
+// 		trace("populating with " + artist);
+
+		_artist_header.text = artist;
+		_artist_header.setTextFormat(_format);
+
+		var songs : Array<Clip> = Clips.getAllUniqueSongsFromArtist(artist);
+
+		var line_height:Int = 20;
+
+		// Clear out the _song_list_line_container
+		for(i in 0..._song_list_line_container.numChildren) {
+			_song_list_line_container.removeChildAt(0);
+		}
+
+		for (i in 0...songs.length) {
+// 			trace(songs[i].getTitle());
+			var line : SongListLine = new SongListLine(0,30+i*line_height,_width,line_height,songs[i]);
+			_song_list_line_container.addChild(line);
+		}
+
+	}
+
+}
+
+
+------------------------------ SongListLine.hx ------------------------------
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+import flash.text.TextField;
+import flash.text.TextFormat;
+
+class SongListLine extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	var t:TextField;
+	var format:TextFormat;
+
+	var _width  : Float;
+	var _height : Float;
+
+	var _clip : Clip;
+
+	public function new (x_:Float, y_:Float, width_:Float, height_:Float, clip_:Clip) {
+		super();
+
+		x = x_;
+		y = y_;
+		_width = width_;
+		_height = height_;
+		_clip = clip_;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		t = new TextField();
+		t.width = _width; 
+		t.selectable = false;
+		t.text = _clip.getTitle();
+// 		t.textColor = 0xAAAAAA;
+
+		format = new TextFormat();
+		format.font = "Arial";
+		format.size = 10;
+		format.bold = true;
+		
+		t.setTextFormat(format);
+
+		_well.addChild(t);
+
+		addEventListener(MouseEvent.MOUSE_DOWN, mouseDownListener);		
+	}
+
+ 	function mouseDownListener(e:MouseEvent):Void {
+		CurrentSong.changeSong(_clip);
+	}
+}
+
+
+------------------------------ PlaylistCloud.hx ------------------------------
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+
+class PlaylistCloud extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	static var _width  : Float;
+	static var _height : Float;
+
+	static var _tag_cloud_tag_container:Sprite;
+
+	var _nodes : Array<PlaylistCloudTag>;
+
+	// Constants
+	var _columb_constant:Float; // Columbic force constant
+	var _inertial_distance:Float; // Inertial or resting distance of the springs
+	var _springK:Float; // Elasticity coefficient. The larger K is, the stiffer the spring.
+	var _energy_loss:Float;
+
+	public function new (x_:Int, y_:Int, width_:Int, height_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_width = width_;
+		_height = height_;
+
+		_nodes = new Array();
+
+		// Constants for spring motion
+  		_columb_constant = -500000;
+//  		_columb_constant = -50000;
+		_inertial_distance = 0.0;
+		_springK = 1.0;
+		_energy_loss = 0.99999;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		// Create the background
+ 		_background = new Shape();
+   		_background.graphics.beginFill(0xFFFFFF,1);
+		_background.graphics.lineStyle(1,0x333333);
+   		_background.graphics.moveTo(0,0);
+   		_background.graphics.lineTo(_width,0);
+   		_background.graphics.lineTo(_width,_height);
+   		_background.graphics.lineTo(0,_height);
+   		_background.graphics.lineTo(0,0);
+ 		_well.addChild(_background);
+
+		// A container for all the songListLines 
+		_tag_cloud_tag_container = new Sprite();
+		_well.addChild(_tag_cloud_tag_container);
+
+	}
+
+	//
+	// Loop over all tags, and for each tag, loop over all the clips and see if
+	// this clip includes this tag.  If it does, remember it's location.  Then,
+	// after we're done, find the midpoint.
+	//
+	// Later, we will change this from individual tags into clusters of tags.
+	//
+	public function calculateTagPositions():Void {
+		
+		var tags:Array<String> = Tags.getAllTags();
+
+		var clip_ids:Array<String> = Clips.getAllClipIDs();
+
+		for (tag in tags) {
+			var grid_locations : Array<GridLocation> = new Array();
+			var total_num : Int = 0;
+			// Get all the grid locations that this tag can be found at
+			for (clip_id in clip_ids) {
+				if (Clips.clipContainsTag(clip_id,tag)) {
+					var clip : Clip = Clips.getClip(clip_id);
+					var g : GridLocation = new GridLocation(clip.getGridX(), clip.getGridY());
+					grid_locations.push(g);
+					total_num += 1;
+				}
+			}
+
+			// Find the center of mass of these grid locations
+			var center_x:Float = 0;
+			var center_y:Float = 0;
+			for (grid_location in grid_locations) {
+				center_x += grid_location.getGridX();
+				center_y += grid_location.getGridY();
+			}
+			center_x = ((center_x / grid_locations.length) / GlobalSettings.getGridSizeX()) * _width;
+			center_y = ((center_y / grid_locations.length) / GlobalSettings.getGridSizeY()) * _height;
+
+			// Add a PlaylistCloudTag at this location
+			if (total_num > 20) {
+				addTag(center_x,center_y,tag,total_num);
+			}
+
+		}
+		
+ 		// Calculate the final positions of the tags by iterating the calculate
+ 		// loop a bunch of times
+//  		for (i in 0...100) {
+//  			calculate();
+//  		}
+	}
+
+	public function addTag(x_:Float, y_:Float,tag_:String,total_num_:Int) {
+		var tag_cloud_tag:PlaylistCloudTag = new PlaylistCloudTag(x_,y_,tag_,total_num_);
+		_nodes.push(tag_cloud_tag);
+		_tag_cloud_tag_container.addChild(tag_cloud_tag);
+		
+		
+	}
+	
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Force calculations
+	//
+	////////////////////////////////////////////////////////////////////////////////
+
+	// Calculate all the forces on each node and their new positions
+	public function calculate():Void {
+
+		var timestep:Float = 0.1;
+		// Compute internal forces on the springs
+ 		for (n in _nodes) {
+			// Compute the spring force between this node and its origin
+			var f:Vector = computeSpringForce(n);
+
+ 			// Compute the electrostatic force between this node and all other nodes
+ 			var e:Vector = computeElectrostaticForce(n);
+ 			f.add(e);
+
+  			// Compute the wall force between this node and all the walls
+  			var w:Vector = computeWallForce(n);
+  			f.add(w);
+
+			f.mult(timestep);
+			var v:Vector = n.getVelocity();
+			v.add(f);
+			n.setVelocity(v);
+
+			v.mult(timestep);
+			var p:Vector = n.getPosition();
+			p.add(v);
+			n.setPosition(p);
+ 		}
+	}
+
+	function computeSpringForce(a:PlaylistCloudTag):Vector {
+		var force = new Vector();
+
+		var b:Vector = new Vector(a.getOrigX(),a.getOrigY());
+
+		if (a.getPosition().equals(b)) {
+			return force;
+		}
+
+		var apos:Vector = a.getPosition();
+		var displacement:Vector = b.subtract(apos);
+
+		var k:Float = 10.0;
+
+		force = displacement.mult(k);
+
+		return force;
+	}
+
+
+	function computeElectrostaticForce(a:PlaylistCloudTag):Vector {
+		var f:Vector = new Vector();
+		for (n in _nodes) {
+// 			trace("comparing " + a.getTag() + " with " + n.getTag());
+			if (n != a) {
+				var apos:Vector = a.getPosition();
+				var npos:Vector = n.getPosition();
+				var r:Float = apos.distance(n.getPosition());
+				var numerator:Vector = npos.subtract(apos);
+				numerator.mult(_columb_constant);
+				var total:Vector = numerator.divide(r * r * r);
+// 				if (a.overlapsWith(n)) {
+// // 					trace("overlap " + a.getTag() + " " + n.getTag());
+// 					total.mult(100000);
+// 				}
+				f.add(total);
+			}
+		}
+		return f;
+	}
+
+	function computeWallForce(a:PlaylistCloudTag):Vector {
+ 		var force = new Vector();
+		
+		if (a.getLeftEdge() < 0) {
+			force.x = a.getLeftEdge() * -100;
+		}
+
+		if (a.getRightEdge() > _width) {
+			force.x = (a.getRightEdge() - _width) * -100;
+		}
+
+		if (a.getTopEdge() < 0) {
+			force.y = a.getTopEdge() * -100;
+		}
+
+		if (a.getBottomEdge() > _width) {
+			force.y = (a.getBottomEdge() - _height) * -100;
+		}
+
+// 		var apos:Vector = a.getPosition();
+// 		var displacement:Vector = b.subtract(apos);
+
+// 		var k:Float = 10.0;
+
+// 		force = displacement.mult(k);
+
+// 		force.mult(5);
+
+		return force;
+	}
+
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Utility functions
+	//
+	////////////////////////////////////////////////////////////////////////////////
+	
+	// A "r"easonable number of decimal points for trace()
+	public function r(f:Float):Float {
+		var d:Float = 10000;
+		var n:Int = Std.int(f * d);
+		return n / d;
+	}
+	
+	// Change a Float to an Int for trace()
+	public function ii(f:Float):Int {
+		return Std.int(f);
+	}
+
+
+
+}
+
+------------------------------ PlaylistCloudTag.hx ------------------------------
+
+import flash.events.MouseEvent;
+import flash.events.Event;
+import flash.events.ProgressEvent;
+import flash.events.IOErrorEvent;
+import flash.display.Stage;
+import flash.display.Sprite;
+import flash.display.Shape;
+import flash.display.SimpleButton;
+import flash.media.Sound;
+import flash.media.SoundChannel;
+import flash.net.URLRequest;
+import flash.text.TextField;
+import flash.text.TextFieldAutoSize;
+import flash.text.TextFormat;
+
+class PlaylistCloudTag extends Sprite {
+
+	var _well : Sprite;
+	var _background : Shape;
+
+	var t:TextField;
+	var format:TextFormat;
+
+	var _width  : Float;
+	var _height : Float;
+
+	var _tag : String;
+	var _total_num : Int;
+	
+	var _orig_x : Float;
+	var _orig_y : Float;
+
+	// Force calculations
+	var _position : Vector;
+	var _velocity : Vector;
+	var _force : Vector;
+	var _mass : Float;
+
+	public function new (x_:Float, y_:Float, tag_:String, total_num_:Int) {
+		super();
+
+		x = x_;
+		y = y_;
+		_orig_x = x_;
+		_orig_y = y_;
+		_tag = tag_;
+		_total_num = total_num_;
+
+		// sness - Need to change this later to reflect actual text properties
+		_width = 200;
+		_height = 20;
+
+		// Force calculations
+		_position = new Vector(x,y);
+		_velocity = new Vector();
+		_force = new Vector();
+		_mass = 1.0;
+
+		// Well to hold everything
+		_well = new Sprite();
+		this.addChild(_well);
+
+		t = new TextField();
+		// 		t.width = _width; 
+		t.selectable = false;
+		t.text = _tag;
+		// 		t.border = true;
+		t.autoSize = TextFieldAutoSize.CENTER;
+
+		format = new TextFormat();
+		format.font = "Arial";
+		format.size = (total_num_/10) + 10;
+		format.bold = true;
+		
+		t.setTextFormat(format);
+
+		_well.addChild(t);
+
+		// 		// sness - For testing
+		//  		_background = new Shape();
+		//    		_background.graphics.beginFill(0xFF0000,1);
+		// 		_background.graphics.lineStyle(1,0x333333);
+		//    		_background.graphics.moveTo(0,0);
+		//    		_background.graphics.lineTo(3,0);
+		//    		_background.graphics.lineTo(3,3);
+		//    		_background.graphics.lineTo(0,3);
+		//    		_background.graphics.lineTo(0,0);
+		//  		_well.addChild(_background);
+
+		addEventListener(MouseEvent.MOUSE_DOWN, mouseDownListener);		
+	}
+
+ 	function mouseDownListener(e:MouseEvent):Void {
+		trace("down=" + _tag);
+	}
+
+	public function getTag():String {
+		return _tag;
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Force calculations
+	//
+	////////////////////////////////////////////////////////////////////////////////
+
+	public function getOrigX():Float {
+		return _orig_x;
+	}
+
+	public function getOrigY():Float {
+		return _orig_y;
+	}
+
+	public function getPosition():Vector {
+// 		trace("gp x=" + x + " y=" + y);
+ 		_position.x = x;
+ 		_position.y = y;
+		return _position;
+	}
+
+	public function getLeftEdge():Float {
+// 		trace("gle " + _tag + " px=" + rr(_position.x) + " tw2=" + rr(t.width / 2.0) + " ret=" + rr(_position.x - (t.width / 2.0)));
+		return _position.x - (t.width / 2.0);
+	}
+
+	public function getRightEdge():Float {
+// 		trace("gre " + _tag + " px=" + rr(_position.x) + " tw2=" + rr(t.width / 2.0) + " ret=" + rr(_position.x + (t.width / 2.0)));
+		return _position.x + (t.width / 2.0);
+	}
+
+	public function getTopEdge():Float {
+// 		trace("gte " + _tag + " py=" + rr(_position.y) + " tw2=" + rr(t.height / 2.0) + " ret=" + rr(_position.y - (t.height / 2.0)));
+		return _position.y - (t.height / 2.0);
+	}
+
+	public function getBottomEdge():Float {
+// 		trace("gbe " + _tag + " py=" + rr(_position.y) + " tw2=" + rr(t.height / 2.0) + " ret=" + rr(_position.y + (t.height / 2.0)));
+		return _position.y + (t.height / 2.0);
+	}
+	
+	public function setPosition(f:Vector) {
+		_position = f;
+
+		// 		if (_position.x < 0) {
+		// 			_position.x = 0;
+		// 		}
+		// 		if (_position.x > 300) {
+		// 			_position.x = 300;
+		// 		}
+
+		// 		if (_position.y < 0) {
+		// 			_position.y = 0;
+		// 		}
+		// 		if (_position.y > 300) {
+		// 			_position.y = 300;
+		// 		}
+
+		// 		x = _position.x - (width / 2);
+		// 		y = _position.y - (height / 2);
+
+ 		x = _position.x;
+ 		y = _position.y;
+
+ 		t.x = -1 * (width / 2);
+ 		t.y = -1 * (height / 2);
+
+		//  		trace("x=" + _position.x + " y=" + _position.y + "w=" + width + " h=" + height);
+
+	}
+
+	public function getVelocity():Vector {
+		return _velocity;
+	}
+
+	public function setVelocity(f:Vector) {
+		_velocity = f;
+	}
+
+	public function getForce():Vector {
+		return _force;
+	}
+
+	public function setForce(f:Vector) {
+		_force = f;
+	}
+
+	public function getMass():Float {
+		return _mass;
+	}
+
+	public function setMass(f:Float) {
+		_mass = f;
+	}
+
+	public function getArea():Float {
+		return width * height;
+	}
+
+	public function overlapsWith(other:PlaylistCloudTag) {
+
+		var this_area:Float = getArea();
+		var other_area:Float = other.getArea();
+
+// 		trace("ta=" + this_area + " oa=" + other_area);
+
+// 		trace("width=" + width + " t.width=" + t.width);
+// 		trace("height=" + height + " t.height=" + t.height);
+
+		var a_top:Float;
+		var a_left:Float;
+		var a_bottom:Float;
+		var a_right:Float;
+
+		var b_top:Float;
+		var b_left:Float;
+		var b_bottom:Float;
+		var b_right:Float;
+
+		//rect 'a' can never lie completely 'inside' rect 'b'		
+		if (this_area > other_area) {
+			a_top = getTopEdge();
+			a_left = getLeftEdge();
+			a_bottom = getBottomEdge();
+			a_right = getRightEdge();
+
+			b_top = other.getTopEdge();
+			b_left = other.getLeftEdge();
+			b_bottom = other.getBottomEdge();
+			b_right = other.getRightEdge();
+// 			trace("normal");
+		} else {
+			b_top = getTopEdge();
+			b_left = getLeftEdge();
+			b_bottom = getBottomEdge();
+			b_right = getRightEdge();
+
+			a_top = other.getTopEdge();
+			a_left = other.getLeftEdge();
+			a_bottom = other.getBottomEdge();
+			a_right = other.getRightEdge();
+// 			trace("swap");
+		}
+
+// 		trace("px=" + _position.x + " py=" + _position.y);
+// 		trace("at=" + rr(a_top) + " ab=" + rr(a_bottom) + " al=" + rr(a_left) + " ar=" + rr(a_right));
+// 		trace("bt=" + rr(b_top) + " bb=" + rr(b_bottom) + " bl=" + rr(b_left) + " br=" + rr(b_right));
+
+		//check top-left point
+		if( b_top >= a_top && b_top <= a_bottom ) {
+			if( b_left >= a_left && b_left <= a_right ) {
+				return true;
+			}
+		}
+
+		//check top-right point
+		if( b_top >= a_top && b_top <= a_bottom ) {
+			if( b_right >= a_left && b_right <= a_right ) {
+				return true;
+			}
+		}
+
+		//check bottom-left point
+		if( b_bottom >= a_top && b_bottom <= a_bottom ) {
+			if( b_left >= a_left && b_left <= a_right ) {
+				return true;
+			}
+		}
+
+		//check bottom-right point
+		if( b_bottom >= a_top && b_bottom <= a_bottom ) {
+			if( b_right >= a_left && b_right <= a_right ) {
+				return true;
+			}
+		}
+
+		return false;
+
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//
+	// Utility functions
+	//
+	////////////////////////////////////////////////////////////////////////////////
+	
+	// A "r"easonable number of decimal points for trace()
+	public function rr(f:Float):Float {
+		var d:Float = 10000;
+		var n:Int = Std.int(f * d);
+		return n / d;
+	}
+	
+	// Change a Float to an Int for trace()
+	public function ii(f:Float):Int {
+		return Std.int(f);
+	}
+
+}
+
+
+------------------------------ SongCloud.hx ------------------------------
+
+** Mon Aug 31 2009 - 16:25:11 PM
+   -----------------------------
+
+OR semantic for Tags:
+
+	// Find which Songs should be selected based on the items that are in
+	// CurrentArtists and CurrentTags
+	public static function regenerateSelected():Void {
+// 		trace("regenerateSelected");
+		var current_artists : Array<Artist> = CurrentArtists.getArtists();
+		var current_tags : Array<Tag> = CurrentTags.getTags();
+		
+// 		trace(current_tags);
+
+		for (n in _nodes) {
+			n.setSelected(false);
+		}
+
+		if (current_artists.length == 0 && current_tags.length == 0) { 
+			cycleQuadrants();
+			return;
+		}
+
+		for (n in _nodes) {
+			var matches_one_artist : Bool = false;
+			var matches_all_tags : Bool = true;
+			
+			// Check to see if our query artist matches any artist we are given
+			if (current_artists.length > 0) {
+				for (artist in current_artists) {
+// 					trace("matching artist=" + artist.getName());
+					if (n.getSong().getArtist() == artist.getName()) {
+						matches_one_artist = true;
+					}
+				}
+			} else {
+				matches_one_artist = true;
+// 				trace("no artists selected");
+			}
+
+			// Make a hash of all the tags that all the clips for this song
+			// contains
+			//
+			// sness - Actually just do the first clip for now
+			var clip_tags:Array<Tag> = n.getSong().getFirstClip().getTags();
+			for (tag in current_tags) {
+// 				trace("matching tag=" + tag.getName());
+				var match:Bool = false;
+				for (clip_tag in clip_tags) {
+					if (tag.getName() == clip_tag.getName()) {
+						match = true;
+						break;
+					}
+				}
+				// If one of the matches is false, then the AND condition is also false
+				if (match == false) {
+					matches_all_tags = false;
+					break;
+				}
+			}
+			
+
+			if (matches_one_artist && matches_all_tags) {
+				n.setSelected(true);
+			}
+					
+		}
+
+		cycleQuadrants();
+	}

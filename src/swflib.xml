@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<movie version="8" width="380" height="228" framerate="12">
+  <background color="#000000"/>
+  <frame>
+    <library>
+      <clip id="playimg" import="library/playbtnt.png" />
+      <clip id="stopimg" import="library/stopbtnt.png" />
+      <clip id="pauseimg" import="library/pausebtn.png" />
+      <clip id="rewindimg" import="library/rewindbtn.png" />
+      <clip id="playdisimg" import="library/playbtndis.png" />
+      <clip id="stopdisimg" import="library/stopbtndis.png" />
+      <clip id="pausedisimg" import="library/pausebtndis.png" />
+      <clip id="rewinddisimg" import="library/rewindbtndis.png" />
+      <clip id="soundonimg" import="library/speakeron.png" />
+      <clip id="soundoffimg" import="library/speaker.png" />
+      <clip id="uponimg" import="library/upbtn16on.png" />
+      <clip id="downonimg" import="library/downbtn16on.png" />
+      <clip id="upoffimg" import="library/upbtn16off.png" />
+      <clip id="downoffimg" import="library/downbtn16off.png" />
+      <clip id="downloadimg" import="library/songdownloadbtn.png" />
+      <clip id="songplayimg" import="library/songplaybtn.png" />
+      <clip id="volknob" import="library/volknob.png" />
+      <clip id="nymphicon" import="library/nymphlogo.png" />
+      <clip id="arrowup" import="library/arrow_up.png" />
+      <clip id="arrowdown" import="library/arrow_down.png" />
+      <clip id="arrowleft" import="library/arrow_left.png" />
+      <clip id="arrowright" import="library/arrow_right.png" />
+      <clip id="arrowin" import="library/arrow_in.png" />
+      <clip id="arrowout" import="library/arrow_out.png" />
+	</library>
+  </frame>
+</movie>

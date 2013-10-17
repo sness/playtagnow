@@ -1,0 +1,4 @@
+-main PlayTagNow
+-swf ../playtagnow.swf
+-swf-version 9
+-swf-header 1070:720:30:FFFFFF

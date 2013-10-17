@@ -1,0 +1,49 @@
+/**********************************************/
+/* lovingly created by hand in emacs by sness */
+/**********************************************/
+
+
+
+body {
+	color: #222;
+ background-color: #fff;
+}
+
+h1 {
+	font-size: 200%;
+}
+
+h2 {
+	font-size: 131%;
+}
+
+h3 {
+	font-size: 116%;
+}
+
+h4 {
+	font-size: 108%;
+}
+
+h5 {
+	font-size: 101%;
+}
+
+
+#main {
+}
+
+#labels {
+	font-size: 131%;
+ margin-top: 0px;
+ padding-top: 0px;
+}
+
+td {
+	cell-spacing: 10px;
+}
+.label {
+	border: 1px solid black;
+	padding: 10px;
+ text-align: center;
+}
